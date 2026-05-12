@@ -40,6 +40,12 @@ const MasterData: React.FC = () => {
             title: 'Product Management',
             items: [
                 {
+                    title: 'Hero Sections',
+                    description: 'Manage homepage hero carousel images and descriptions.',
+                    icon: <FileTextOutlined style={{ fontSize: '24px', color: colorPrimary }} />,
+                    path: '/master-data/heroes',
+                },
+                {
                     title: 'Product Categories/Collections',
                     description: 'Manage categories for products.',
                     icon: <LinkOutlined style={{ fontSize: '24px', color: colorPrimary }} />,

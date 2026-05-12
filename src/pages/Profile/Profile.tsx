@@ -15,7 +15,7 @@ const Profile: React.FC = () => {
         queryFn: profileService.getProfile,
     });
 
-    const profileData = response?.data;
+    const profileData = response?.output;
 
     const items = [
         {

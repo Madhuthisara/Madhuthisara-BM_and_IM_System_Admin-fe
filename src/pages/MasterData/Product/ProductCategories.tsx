@@ -1,72 +1,133 @@
 import React, { useState } from 'react';
-import { Card, Typography, Table, Button, Modal, Form, Input, Dropdown } from 'antd';
+import { Card, Typography, Table, Button, Modal, Form, Input, Dropdown, message, Spin } from 'antd';
 import { MoreOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import MasterDataSubPageLayout from '../../../components/common/MasterDataSubPageLayout';
+import { categoryService } from '../../../api/services/categoryService';
+import { profileService } from '../../../api/services/profileService';
+import { Category, CreateCategoryPayload, UpdateCategoryPayload } from '../../../types/category';
 
 const { Text, Title } = Typography;
-
-interface CategoryData {
-    key: string;
-    name: string;
-}
 
 const ProductCategories: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [form] = Form.useForm();
-    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const queryClient = useQueryClient();
+    const [editingRecord, setEditingRecord] = useState<Category | null>(null);
 
-    const [data, setData] = useState<CategoryData[]>([]);
+    // Get business ID from user profile
+    const { data: profileResponse } = useQuery({
+        queryKey: ['profile'],
+        queryFn: profileService.getProfile,
+    });
+
+    const businessId = profileResponse?.output?.business?.id?.toString();
+
+    // Load available categories
+    const { data: categoriesResponse, isLoading: isCategoriesLoading } = useQuery({
+        queryKey: ['categories', businessId],
+        queryFn: () => categoryService.getAllCategories(businessId!),
+        enabled: !!businessId,
+    });
+
+    const categories = categoriesResponse?.output || [];
+
+    // Save new category
+    const createMutation = useMutation({
+        mutationFn: (payload: CreateCategoryPayload) => categoryService.createCategory(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['categories', businessId] });
+            message.success('Category created successfully');
+            handleCancel();
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to create category');
+        }
+    });
+
+    // Update existing category
+    const updateMutation = useMutation({
+        mutationFn: (payload: UpdateCategoryPayload) => categoryService.updateCategory(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['categories', businessId] });
+            message.success('Category updated successfully');
+            handleCancel();
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to update category');
+        }
+    });
+
+    // Delete a category
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => categoryService.deleteCategory(id),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['categories', businessId] });
+            message.success('Category deleted successfully');
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to delete category');
+        }
+    });
+
+    // Fill form when editing
+    React.useEffect(() => {
+        if (isModalOpen) {
+            if (editingRecord) {
+                form.setFieldsValue({
+                    name: editingRecord.name,
+                });
+            } else {
+                form.resetFields();
+            }
+        }
+    }, [isModalOpen, editingRecord, form]);
 
     const handleAdd = () => {
-        setEditingKey(null);
-        form.resetFields();
+        setEditingRecord(null);
         setIsModalOpen(true);
     };
 
-    const handleEdit = (record: CategoryData) => {
-        setEditingKey(record.key);
-        form.setFieldsValue({ name: record.name });
+    const handleEdit = (record: Category) => {
+        setEditingRecord(record);
         setIsModalOpen(true);
     };
 
-    const handleDelete = (key: string) => {
+    const handleDelete = (id: string) => {
         Modal.confirm({
             title: 'Are you sure you want to delete this category?',
             content: 'This action cannot be undone.',
             okText: 'Yes, Delete',
             okType: 'danger',
             cancelText: 'Cancel',
-            onOk: () => {
-                setData(data.filter((item) => item.key !== key));
-            },
+            onOk: () => deleteMutation.mutate(id),
         });
     };
 
     const handleOk = () => {
         form.validateFields().then((values) => {
-            if (editingKey) {
-                const newData = data.map((item) =>
-                    item.key === editingKey ? { ...item, name: values.name } : item
-                );
-                setData(newData);
-            } else {
-                const newData: CategoryData = { key: Date.now().toString(), name: values.name };
-                setData([...data, newData]);
+            if (editingRecord) {
+                updateMutation.mutate({
+                    id: editingRecord.id,
+                    name: values.name,
+                });
+            } else if (businessId) {
+                createMutation.mutate({
+                    business_id: businessId,
+                    name: values.name,
+                });
             }
-            setIsModalOpen(false);
-            form.resetFields();
-            setEditingKey(null);
         });
     };
 
     const handleCancel = () => {
         setIsModalOpen(false);
         form.resetFields();
-        setEditingKey(null);
+        setEditingRecord(null);
     };
 
-    const columns: ColumnsType<CategoryData> = [
+    const columns: ColumnsType<Category> = [
         { title: 'Category Name', dataIndex: 'name', key: 'name' },
         {
             title: 'Actions', key: 'actions', width: 100, align: 'center',
@@ -84,7 +145,7 @@ const ProductCategories: React.FC = () => {
                             label: 'Delete',
                             icon: <DeleteOutlined />,
                             danger: true,
-                            onClick: () => handleDelete(record.key)
+                            onClick: () => handleDelete(record.id)
                         }
                     ]
                 }} trigger={['click']}>
@@ -98,17 +159,35 @@ const ProductCategories: React.FC = () => {
         <MasterDataSubPageLayout title="Product Categories" onAdd={handleAdd} addButtonText="Add Category">
             <div style={{ marginBottom: 24 }}><Text type="secondary">Manage categories for products.</Text></div>
             <Card bordered={false} style={{ borderRadius: 8 }}>
-                <div style={{ marginBottom: 16 }}><Title level={4}>Categories</Title><Text type="secondary">A list of all product categories.</Text></div>
-                <Table columns={columns} dataSource={data} pagination={false} />
+                <div style={{ marginBottom: 16 }}>
+                    <Title level={4}>Categories</Title>
+                    <Text type="secondary">A list of all product categories.</Text>
+                </div>
+                <Table
+                    columns={columns}
+                    dataSource={categories}
+                    rowKey="id"
+                    loading={isCategoriesLoading}
+                    pagination={{ pageSize: 10 }}
+                />
             </Card>
             <Modal
-                title={editingKey ? "Edit Category" : "Add Category"}
+                title={editingRecord ? "Edit Category" : "Add Category"}
                 open={isModalOpen}
                 onOk={handleOk}
                 onCancel={handleCancel}
-                okText={editingKey ? "Update" : "Create"}
+                okText={editingRecord ? "Update" : "Create"}
+                confirmLoading={createMutation.isPending || updateMutation.isPending}
             >
-                <Form form={form} layout="vertical"><Form.Item name="name" label="Category Name" rules={[{ required: true }]}><Input /></Form.Item></Form>
+                <Form form={form} layout="vertical">
+                    <Form.Item
+                        name="name"
+                        label="Category Name"
+                        rules={[{ required: true, message: 'Please input the category name!' }]}
+                    >
+                        <Input placeholder="Enter category name" />
+                    </Form.Item>
+                </Form>
             </Modal>
         </MasterDataSubPageLayout>
     );

@@ -1,42 +1,88 @@
 import React, { useState } from 'react';
-import { Card, Typography, Table, Button, Modal, Form, Input, Space, Dropdown } from 'antd';
-import { MoreOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Typography, Table, Button, Modal, Form, Input, Dropdown, Spin, message, Tag } from 'antd';
+import { MoreOutlined, EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import MasterDataSubPageLayout from '../../../components/common/MasterDataSubPageLayout';
+import { attributeService } from '../../../api/services/attributeService';
+import { profileService } from '../../../api/services/profileService';
+import { Attribute, CreateAttributePayload, UpdateAttributePayload } from '../../../types/attribute';
+import AttributeOptionsModal from './components/AttributeOptionsModal';
 
 const { Text, Title } = Typography;
 
-interface AttributeData {
-    key: string;
-    name: string;
-}
-
 const MaterialAttributes: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
     const [form] = Form.useForm();
-    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [editingAttribute, setEditingAttribute] = useState<Attribute | null>(null);
+    const [selectedAttribute, setSelectedAttribute] = useState<Attribute | null>(null);
+    const queryClient = useQueryClient();
 
-    // Mock Data
-    const [data, setData] = useState<AttributeData[]>([
-        { key: '1', name: 'Color' },
-        { key: '2', name: 'Design' },
-        { key: '3', name: 'Flowers' },
-        { key: '4', name: 'Size' },
-    ]);
+    // Get business ID from user profile
+    const { data: profileResponse } = useQuery({
+        queryKey: ['profile'],
+        queryFn: profileService.getProfile,
+    });
+
+    const businessId = profileResponse?.output?.business?.id?.toString();
+
+    // Load all attributes (options are included in the response)
+    const { data: attributesResponse, isLoading: isFetching } = useQuery({
+        queryKey: ['attributes', businessId],
+        queryFn: () => attributeService.getAllAttributes(businessId!),
+        enabled: !!businessId,
+    });
+
+    const attributes = attributesResponse?.output || [];
+
+    // Save new attribute
+    const createMutation = useMutation({
+        mutationFn: (payload: CreateAttributePayload) => attributeService.createAttribute(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['attributes', businessId] });
+            message.success('Attribute created successfully');
+            handleCancel();
+        },
+    });
+
+    // Update existing attribute
+    const updateMutation = useMutation({
+        mutationFn: (payload: UpdateAttributePayload) => attributeService.updateAttribute(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['attributes', businessId] });
+            message.success('Attribute updated successfully');
+            handleCancel();
+        },
+    });
+
+    // Delete an attribute
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => attributeService.deleteAttribute(id),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['attributes', businessId] });
+            message.success('Attribute deleted successfully');
+        },
+    });
 
     const handleAdd = () => {
-        setEditingKey(null);
+        setEditingAttribute(null);
         form.resetFields();
         setIsModalOpen(true);
     };
 
-    const handleEdit = (record: AttributeData) => {
-        setEditingKey(record.key);
+    const handleEdit = (record: Attribute) => {
+        setEditingAttribute(record);
         form.setFieldsValue({ name: record.name });
         setIsModalOpen(true);
     };
 
-    const handleDelete = (key: string) => {
+    const handleAddOptions = (record: Attribute) => {
+        setSelectedAttribute(record);
+        setIsOptionsModalOpen(true);
+    };
+
+    const handleDelete = (id: string) => {
         Modal.confirm({
             title: 'Are you sure you want to delete this attribute?',
             content: 'This action cannot be undone.',
@@ -44,7 +90,7 @@ const MaterialAttributes: React.FC = () => {
             okType: 'danger',
             cancelText: 'Cancel',
             onOk: () => {
-                setData(data.filter((item) => item.key !== key));
+                deleteMutation.mutate(id);
             },
         });
     };
@@ -53,23 +99,19 @@ const MaterialAttributes: React.FC = () => {
         form
             .validateFields()
             .then((values) => {
-                if (editingKey) {
-                    // Edit Mode
-                    const newData = data.map((item) =>
-                        item.key === editingKey ? { ...item, name: values.name } : item
-                    );
-                    setData(newData);
-                } else {
-                    // Create Mode
-                    const newData: AttributeData = {
-                        key: Date.now().toString(),
+                if (editingAttribute) {
+                    updateMutation.mutate({
+                        attribute_id: editingAttribute.attribute_id,
                         name: values.name,
-                    };
-                    setData([...data, newData]);
+                    });
+                } else {
+                    if (businessId) {
+                        createMutation.mutate({
+                            business_id: businessId,
+                            name: values.name,
+                        });
+                    }
                 }
-                setIsModalOpen(false);
-                form.resetFields();
-                setEditingKey(null);
             })
             .catch((info) => {
                 console.log('Validate Failed:', info);
@@ -79,14 +121,59 @@ const MaterialAttributes: React.FC = () => {
     const handleCancel = () => {
         setIsModalOpen(false);
         form.resetFields();
-        setEditingKey(null);
+        setEditingAttribute(null);
     };
 
-    const columns: ColumnsType<AttributeData> = [
+    const handleOptionsModalClose = () => {
+        setIsOptionsModalOpen(false);
+        // Refresh attributes to show updated options
+        queryClient.invalidateQueries({ queryKey: ['attributes', businessId] });
+    };
+
+    const columns: ColumnsType<Attribute> = [
         {
             title: 'Attribute Name',
             dataIndex: 'name',
             key: 'name',
+            width: '25%',
+        },
+        {
+            title: 'Options',
+            key: 'options',
+            render: (_, record) => {
+                const hasOptions = record.options && record.options.length > 0;
+
+                return (
+                    <div className="flex items-center flex-wrap gap-2">
+                        {hasOptions ? (
+                            <>
+                                {record.options!.map(opt => (
+                                    <Tag key={opt.option_id} color="blue">
+                                        {opt.name}
+                                    </Tag>
+                                ))}
+                                <Button
+                                    type="dashed"
+                                    size="small"
+                                    icon={<PlusOutlined />}
+                                    onClick={() => handleAddOptions(record)}
+                                >
+                                    Add
+                                </Button>
+                            </>
+                        ) : (
+                            <Button
+                                type="dashed"
+                                size="small"
+                                icon={<PlusOutlined />}
+                                onClick={() => handleAddOptions(record)}
+                            >
+                                Add Options
+                            </Button>
+                        )}
+                    </div>
+                );
+            },
         },
         {
             title: 'Actions',
@@ -106,7 +193,7 @@ const MaterialAttributes: React.FC = () => {
                         label: 'Delete',
                         icon: <DeleteOutlined />,
                         danger: true,
-                        onClick: () => handleDelete(record.key),
+                        onClick: () => handleDelete(record.attribute_id),
                     },
                 ];
 
@@ -125,37 +212,46 @@ const MaterialAttributes: React.FC = () => {
             onAdd={handleAdd}
             addButtonText="Add Attribute"
         >
-            <div style={{ marginBottom: 24 }}>
+            <div className="mb-6">
                 <Text type="secondary">
                     Manage the attributes used for material variations.
                 </Text>
             </div>
 
-            <Card bordered={false} style={{ borderRadius: 8 }}>
-                <div style={{ marginBottom: 16 }}>
+            <Card bordered={false} className="rounded-lg">
+                <div className="mb-4">
                     <Title level={4}>Attributes</Title>
                     <Text type="secondary">A list of all material attributes.</Text>
                 </div>
-                <Table
-                    columns={columns}
-                    dataSource={data}
-                    pagination={false}
-                />
+                {isFetching ? (
+                    <div className="py-5 text-center">
+                        <Spin tip="Loading attributes..." />
+                    </div>
+                ) : (
+                    <Table
+                        columns={columns}
+                        dataSource={attributes}
+                        rowKey="attribute_id"
+                        pagination={false}
+                    />
+                )}
             </Card>
 
             <Modal
-                title={editingKey ? "Edit Attribute" : "Add Attribute"}
+                title={editingAttribute ? "Edit Attribute" : "Add Attribute"}
                 open={isModalOpen}
                 onOk={handleOk}
                 onCancel={handleCancel}
-                okText={editingKey ? "Update" : "Create"}
+                okText={editingAttribute ? "Update" : "Create"}
+                confirmLoading={createMutation.isPending || updateMutation.isPending}
             >
                 <Form
                     form={form}
                     layout="vertical"
                     name="form_in_modal"
+                    className="flex flex-col space-y-2"
                 >
-                    <div className='flex secondary-text'>Create a new attribute to be used across materials.</div>
+                    <div className="flex">Create a new attribute to be used across materials.</div>
                     <Form.Item
                         name="name"
                         label="Attribute Name"
@@ -165,6 +261,12 @@ const MaterialAttributes: React.FC = () => {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            <AttributeOptionsModal
+                attribute={selectedAttribute}
+                open={isOptionsModalOpen}
+                onClose={handleOptionsModalClose}
+            />
         </MasterDataSubPageLayout>
     );
 };

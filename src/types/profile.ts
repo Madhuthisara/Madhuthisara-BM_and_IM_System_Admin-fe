@@ -1,5 +1,5 @@
 export interface Business {
-    id: number;
+    id: string | number;
     business_name: string;
     business_address: string;
     website: string | null;
@@ -12,11 +12,11 @@ export interface Business {
 }
 
 export interface User {
-    id: number;
+    id: string | number;
     full_name: string;
     email: string;
     mobile_number: string;
-    business_id: number;
+    business_id: string | number;
     created_at: string;
     updated_at: string;
     business: Business;
@@ -29,7 +29,7 @@ export interface ProfileData {
 
 export interface ProfileResponse {
     message: string;
-    data: ProfileData;
+    output: ProfileData;
 }
 
 export interface UpdatePersonalPayload {

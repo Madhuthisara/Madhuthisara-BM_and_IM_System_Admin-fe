@@ -1,77 +1,269 @@
-import React, { useState } from 'react';
-import { Card, Typography, Table, Button, Modal, Form, Input, Dropdown } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Card, Typography, Table, Button, Modal, Form, Input, Dropdown, Select, InputNumber, message, Tag, Spin } from 'antd';
 import { MoreOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import MasterDataSubPageLayout from '../../../components/common/MasterDataSubPageLayout';
+import { profileService } from '../../../api/services/profileService';
+import { materialService } from '../../../api/services/materialService';
+import { materialStockService } from '../../../api/services/materialStockService';
+import { attributeService } from '../../../api/services/attributeService';
+import { MaterialStock, CreateMaterialStockPayload, UpdateMaterialStockPayload } from '../../../types/materialStock';
+import { Material } from '../../../types/material';
+import { AttributeOption } from '../../../types/attribute';
 
 const { Text, Title } = Typography;
+const { Option } = Select;
 
-interface StockData {
-    key: string;
-    material: string;
-    quantity: number;
+// Group options by their attribute (e.g., Color -> [Red, Blue])
+interface AttributeWithOptions {
+    attribute_id: string;
+    attribute_name: string;
+    options: AttributeOption[];
 }
 
-const MaterialStock: React.FC = () => {
+const MaterialStockPage: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [form] = Form.useForm();
-    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [editingRecord, setEditingRecord] = useState<MaterialStock | null>(null);
+    const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
+    const [attributesWithOptions, setAttributesWithOptions] = useState<AttributeWithOptions[]>([]);
+    const queryClient = useQueryClient();
 
-    const [data, setData] = useState<StockData[]>([]);
+    // Get business ID from user profile
+    const { data: profileResponse } = useQuery({
+        queryKey: ['profile'],
+        queryFn: profileService.getProfile,
+    });
+
+    const businessId = profileResponse?.output?.business?.id?.toString();
+
+    // Load all material stocks
+    const { data: stocksResponse, isLoading: isStocksLoading } = useQuery({
+        queryKey: ['materialStocks', businessId],
+        queryFn: () => materialStockService.getAllMaterialStocks(businessId!),
+        enabled: !!businessId,
+    });
+
+    const stocks = stocksResponse?.output || [];
+
+    // Load materials for the dropdown
+    const { data: materialsResponse, isLoading: isMaterialsLoading } = useQuery({
+        queryKey: ['materials', businessId],
+        queryFn: () => materialService.getAllMaterials(businessId!),
+        enabled: !!businessId,
+    });
+
+    const materials = materialsResponse?.output || [];
+
+    // Find the material currently selected in the form
+    const selectedMaterial = materials.find((m: Material) => m.mat_id === selectedMaterialId);
+
+    // When a material is selected, fetch all its available attribute options
+    useEffect(() => {
+        const fetchOptionsGrouped = async () => {
+            if (selectedMaterial && selectedMaterial.attributes && selectedMaterial.attributes.length > 0) {
+                const grouped: AttributeWithOptions[] = [];
+                for (const attr of selectedMaterial.attributes) {
+                    try {
+                        const response = await attributeService.getAllOptions(attr.attribute_id);
+                        if (response.output && response.output.length > 0) {
+                            grouped.push({
+                                attribute_id: attr.attribute_id,
+                                attribute_name: attr.name,
+                                options: response.output
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error fetching options for attribute:', attr.attribute_id, error);
+                    }
+                }
+                setAttributesWithOptions(grouped);
+            } else {
+                setAttributesWithOptions([]);
+            }
+        };
+        fetchOptionsGrouped();
+    }, [selectedMaterial]);
+
+    // Save new stock item
+    const createMutation = useMutation({
+        mutationFn: (payload: CreateMaterialStockPayload) => materialStockService.createMaterialStock(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['materialStocks', businessId] });
+            message.success('Material stock created successfully');
+            handleCancel();
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to create material stock');
+        }
+    });
+
+    // Update existing stock item
+    const updateMutation = useMutation({
+        mutationFn: (payload: UpdateMaterialStockPayload) => materialStockService.updateMaterialStock(payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['materialStocks', businessId] });
+            message.success('Material stock updated successfully');
+            handleCancel();
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to update material stock');
+        }
+    });
+
+    // Delete a stock item
+    const deleteMutation = useMutation({
+        mutationFn: (stockId: string) => materialStockService.deleteMaterialStock(stockId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['materialStocks', businessId] });
+            message.success('Material stock deleted successfully');
+        },
+        onError: (error: any) => {
+            message.error(error.response?.data?.message || 'Failed to delete material stock');
+        }
+    });
+
+    // Fill form when editing an item
+    useEffect(() => {
+        if (isModalOpen) {
+            if (editingRecord) {
+                setSelectedMaterialId(editingRecord.material_id);
+
+                const formValues: Record<string, any> = {
+                    material_id: editingRecord.material_id,
+                    quantity: parseFloat(editingRecord.quantity),
+                    reorder_level: parseFloat(editingRecord.reorder_level),
+                    sku: editingRecord.sku,
+                };
+
+                // Set values for each attribute (Color, Size, etc.)
+                editingRecord.attribute_options?.forEach(opt => {
+                    formValues[`attr_${opt.attribute_id}`] = opt.option_id;
+                });
+
+                form.setFieldsValue(formValues);
+            } else {
+                form.resetFields();
+                setSelectedMaterialId(null);
+                setAttributesWithOptions([]);
+            }
+        }
+    }, [isModalOpen, editingRecord, form]);
 
     const handleAdd = () => {
-        setEditingKey(null);
-        form.resetFields();
+        setEditingRecord(null);
         setIsModalOpen(true);
     };
 
-    const handleEdit = (record: StockData) => {
-        setEditingKey(record.key);
-        form.setFieldsValue({ material: record.material, quantity: record.quantity });
+    const handleEdit = (record: MaterialStock) => {
+        setEditingRecord(record);
         setIsModalOpen(true);
     };
 
-    const handleDelete = (key: string) => {
+    const handleDelete = (stockId: string) => {
         Modal.confirm({
             title: 'Are you sure you want to delete this stock entry?',
             content: 'This action cannot be undone.',
             okText: 'Yes, Delete',
             okType: 'danger',
             cancelText: 'Cancel',
-            onOk: () => {
-                setData(data.filter((item) => item.key !== key));
-            },
+            onOk: () => deleteMutation.mutate(stockId),
         });
+    };
+
+    // Reset attribute selections if the material changes
+    const handleMaterialChange = (value: string) => {
+        setSelectedMaterialId(value);
+        const fieldsToReset: Record<string, undefined> = {};
+        attributesWithOptions.forEach(attr => {
+            fieldsToReset[`attr_${attr.attribute_id}`] = undefined;
+        });
+        form.setFieldsValue(fieldsToReset);
     };
 
     const handleOk = () => {
         form.validateFields().then((values) => {
-            if (editingKey) {
-                const newData = data.map((item) =>
-                    item.key === editingKey ? { ...item, material: values.material, quantity: parseInt(values.quantity) } : item
-                );
-                setData(newData);
-            } else {
-                const newData: StockData = { key: Date.now().toString(), material: values.material, quantity: parseInt(values.quantity) };
-                setData([...data, newData]);
+            // Collect all selected attribute options
+            const selectedOptions: string[] = [];
+            attributesWithOptions.forEach(attr => {
+                const optionValue = values[`attr_${attr.attribute_id}`];
+                if (optionValue) {
+                    selectedOptions.push(optionValue);
+                }
+            });
+
+            if (editingRecord) {
+                updateMutation.mutate({
+                    stock_id: editingRecord.stock_id,
+                    quantity: values.quantity,
+                    reorder_level: values.reorder_level,
+                    sku: values.sku,
+                    attribute_options: selectedOptions
+                });
+            } else if (businessId) {
+                createMutation.mutate({
+                    business_id: businessId,
+                    material_id: values.material_id,
+                    quantity: values.quantity,
+                    reorder_level: values.reorder_level,
+                    sku: values.sku,
+                    attribute_options: selectedOptions
+                });
             }
-            setIsModalOpen(false);
-            form.resetFields();
-            setEditingKey(null);
         });
     };
 
     const handleCancel = () => {
         setIsModalOpen(false);
         form.resetFields();
-        setEditingKey(null);
+        setEditingRecord(null);
+        setSelectedMaterialId(null);
+        setAttributesWithOptions([]);
     };
 
-    const columns: ColumnsType<StockData> = [
-        { title: 'Material', dataIndex: 'material', key: 'material' },
-        { title: 'Quantity', dataIndex: 'quantity', key: 'quantity' },
+    const columns: ColumnsType<MaterialStock> = [
         {
-            title: 'Actions', key: 'actions', width: 100, align: 'center',
+            title: 'Material',
+            dataIndex: ['material', 'name'],
+            key: 'material',
+        },
+        {
+            title: 'SKU',
+            dataIndex: 'sku',
+            key: 'sku',
+        },
+        {
+            title: 'Attributes',
+            key: 'attributes',
+            render: (_, record) => (
+                <div className="flex flex-wrap gap-1">
+                    {record.attribute_options?.map(opt => (
+                        <Tag color="blue" key={opt.option_id}>
+                            {opt.name} ({opt.code})
+                        </Tag>
+                    )) || '-'}
+                </div>
+            ),
+            responsive: ['md']
+        },
+        {
+            title: 'Quantity',
+            dataIndex: 'quantity',
+            key: 'quantity',
+            render: (value) => parseFloat(value).toFixed(2)
+        },
+        {
+            title: 'Re-order Level',
+            dataIndex: 'reorder_level',
+            key: 'reorder_level',
+            render: (value) => parseFloat(value).toFixed(2)
+        },
+        {
+            title: 'Actions',
+            key: 'actions',
+            width: 100,
+            align: 'center',
             render: (_, record) => (
                 <Dropdown menu={{
                     items: [
@@ -86,7 +278,7 @@ const MaterialStock: React.FC = () => {
                             label: 'Delete',
                             icon: <DeleteOutlined />,
                             danger: true,
-                            onClick: () => handleDelete(record.key)
+                            onClick: () => handleDelete(record.stock_id)
                         }
                     ]
                 }} trigger={['click']}>
@@ -98,25 +290,107 @@ const MaterialStock: React.FC = () => {
 
     return (
         <MasterDataSubPageLayout title="Material Stock" onAdd={handleAdd} addButtonText="Add Stock">
-            <div style={{ marginBottom: 24 }}><Text type="secondary">Manage inventory levels for material variants.</Text></div>
-            <Card bordered={false} style={{ borderRadius: 8 }}>
-                <div style={{ marginBottom: 16 }}><Title level={4}>Stock Levels</Title><Text type="secondary">Current stock levels for materials.</Text></div>
-                <Table columns={columns} dataSource={data} pagination={false} />
+            <div className="mb-6">
+                <Text type="secondary">Manage inventory levels for material variants.</Text>
+            </div>
+
+            <Card bordered={false} className="rounded-lg">
+                <div className="mb-4">
+                    <Title level={4}>Stock Levels</Title>
+                    <Text type="secondary">Current stock levels for materials.</Text>
+                </div>
+
+                <Table
+                    columns={columns}
+                    dataSource={stocks}
+                    rowKey="stock_id"
+                    loading={isStocksLoading}
+                    pagination={{ pageSize: 10 }}
+                />
             </Card>
+
             <Modal
-                title={editingKey ? "Edit Stock" : "Add Stock"}
+                title={editingRecord ? "Edit Material Stock Item" : "Add Material Stock Item"}
                 open={isModalOpen}
                 onOk={handleOk}
                 onCancel={handleCancel}
-                okText={editingKey ? "Update" : "Create"}
+                okText={editingRecord ? "Update" : "Create Stock Item"}
+                confirmLoading={createMutation.isPending || updateMutation.isPending}
+                cancelText="Cancel"
+                width={500}
             >
-                <Form form={form} layout="vertical">
-                    <Form.Item name="material" label="Material" rules={[{ required: true }]}><Input /></Form.Item>
-                    <Form.Item name="quantity" label="Quantity" rules={[{ required: true }]}><Input type="number" /></Form.Item>
-                </Form>
+                <Spin spinning={createMutation.isPending || updateMutation.isPending} tip={editingRecord ? "Updating..." : "Creating..."}>
+                    <div className="mb-6">
+                        <Text type="secondary">Define a new material variant and set its initial stock quantity.</Text>
+                    </div>
+
+                    <Form form={form} layout="vertical">
+                        <Form.Item
+                            name="material_id"
+                            label="Material"
+                            rules={[{ required: true, message: 'Please select a material!' }]}
+                        >
+                            <Select
+                                placeholder="Select a material"
+                                onChange={handleMaterialChange}
+                                loading={isMaterialsLoading}
+                                disabled={!!editingRecord}
+                            >
+                                {materials.map((m: Material) => (
+                                    <Option key={m.mat_id} value={m.mat_id}>{m.name}</Option>
+                                ))}
+                            </Select>
+                        </Form.Item>
+
+                        {/* Dropdowns for each attribute (Color, Size, etc.) */}
+                        {attributesWithOptions.map(attr => (
+                            <Form.Item
+                                key={attr.attribute_id}
+                                name={`attr_${attr.attribute_id}`}
+                                label={attr.attribute_name}
+                                rules={[{ required: true, message: `Please select ${attr.attribute_name}!` }]}
+                            >
+                                <Select placeholder={`Select ${attr.attribute_name}`}>
+                                    {attr.options.map(opt => (
+                                        <Option key={opt.option_id} value={opt.option_id}>
+                                            {opt.name}
+                                        </Option>
+                                    ))}
+                                </Select>
+                            </Form.Item>
+                        ))}
+
+                        <Form.Item
+                            name="sku"
+                            label="SKU"
+                            rules={[{ required: true, message: 'Please input SKU!' }]}
+                        >
+                            <Input placeholder="Enter SKU (e.g., MAT-STOCK-001)" />
+                        </Form.Item>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <Form.Item
+                                name="quantity"
+                                label="Quantity"
+                                rules={[{ required: true, message: 'Please input quantity!' }]}
+                            >
+                                <InputNumber className="w-full" min={0} step={0.01} placeholder="0" />
+                            </Form.Item>
+
+                            <Form.Item
+                                name="reorder_level"
+                                label="Re-order Level"
+                                extra="Alert when stock is low."
+                                rules={[{ required: true, message: 'Please input re-order level!' }]}
+                            >
+                                <InputNumber className="w-full" min={0} step={0.01} placeholder="0" />
+                            </Form.Item>
+                        </div>
+                    </Form>
+                </Spin>
             </Modal>
         </MasterDataSubPageLayout>
     );
 };
 
-export default MaterialStock;
+export default MaterialStockPage;

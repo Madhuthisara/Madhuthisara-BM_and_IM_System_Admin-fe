@@ -1,7 +1,7 @@
 import React from "react";
 import { Form, Input, Button, Card, Typography } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { authService } from "../../api/services/authService";
 import { setLocalStorageData } from "../../utils/storage";
@@ -11,18 +11,21 @@ const { Title, Text } = Typography;
 
 const Login: React.FC = () => {
     const navigate = useNavigate();
+    const location = useLocation();
+    const from = location.state?.from?.pathname || "/dashboard";
+
     const { mutate: login, isPending } = useMutation({
         mutationFn: authService.login,
         onSuccess: (response) => {
             // response is the body returned by authService.login (response.data from axios)
-            const { data } = response;
-            if (data && data.access_token) {
-                setLocalStorageData("token", data.access_token);
+            const { output } = response;
+            if (output && output.access_token) {
+                setLocalStorageData("token", output.access_token);
             }
-            if (data && data.user) {
-                setLocalStorageData("user", data.user);
+            if (output && output.user) {
+                setLocalStorageData("user", output.user);
             }
-            navigate("/dashboard");
+            navigate(from, { replace: true });
         },
 
     });

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Button, Typography, Badge, Avatar, Dropdown, Space, theme, Drawer, Grid } from 'antd';
+import { Layout, Menu, Button, Typography, Badge, Avatar, Dropdown, Space, theme, Drawer, Grid, Spin } from 'antd';
 import {
     MenuOutlined,
     DashboardOutlined,
@@ -8,9 +8,15 @@ import {
     BellOutlined,
     UserOutlined,
     LogoutOutlined,
+    PlusOutlined,
+    ShoppingCartOutlined,
 } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { getLocalStorageData, removeLocalStorageData } from '../utils/storage';
+import HealthStatus from '../components/common/HealthStatus';
+import { healthService } from '../api/services/healthService';
+import AddOrderModal from '../components/orders/AddOrderModal';
 
 
 const { Header, Sider, Content } = Layout;
@@ -20,6 +26,7 @@ const { useBreakpoint } = Grid;
 const MainLayout: React.FC = () => {
     const [collapsed, setCollapsed] = useState(true);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [addOrderModalOpen, setAddOrderModalOpen] = useState(false);
     const screens = useBreakpoint();
     const {
         token: { colorBgContainer, borderRadiusLG },
@@ -77,6 +84,15 @@ const MainLayout: React.FC = () => {
             label: 'Master Data',
             onClick: () => {
                 navigate('/master-data');
+                setMobileMenuOpen(false);
+            },
+        },
+        {
+            key: '/orders',
+            icon: <ShoppingCartOutlined />,
+            label: 'Orders',
+            onClick: () => {
+                navigate('/orders');
                 setMobileMenuOpen(false);
             },
         },
@@ -179,6 +195,16 @@ const MainLayout: React.FC = () => {
                     </div>
 
                     <Space size={24}>
+                        {screens.md && (
+                            <Button
+                                type="primary"
+                                icon={<PlusOutlined />}
+                                onClick={() => setAddOrderModalOpen(true)}
+                                style={{ backgroundColor: '#00b96b' }}
+                            >
+                                Add Order
+                            </Button>
+                        )}
                         {screens.md && <Text type="secondary">{currentDate}</Text>}
 
                         <Badge count={5} size="small">
@@ -204,11 +230,39 @@ const MainLayout: React.FC = () => {
                         overflow: 'auto',
                     }}
                 >
-                    <Outlet />
+                    <HealthStatus />
+                    <HealthCheckGuard>
+                        <Outlet />
+                    </HealthCheckGuard>
                 </Content>
             </Layout>
+
+            <AddOrderModal
+                open={addOrderModalOpen}
+                onClose={() => setAddOrderModalOpen(false)}
+            />
         </Layout>
     );
+};
+
+const HealthCheckGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const { data, isLoading } = useQuery({
+        queryKey: ['health-status'],
+        queryFn: healthService.getHealthStatus,
+        staleTime: Infinity,
+    });
+
+    const isHealthy = data?.success && data?.output?.app === 'up' && data?.output?.database === 'up';
+
+    if (isLoading) {
+        return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" tip="Checking system health..." /></div>;
+    }
+
+    if (!isHealthy) {
+        return null; // HealthStatus component will show the error message
+    }
+
+    return <>{children}</>;
 };
 
 export default MainLayout;

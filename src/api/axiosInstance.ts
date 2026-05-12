@@ -1,14 +1,16 @@
 import axios from 'axios';
 import { message } from 'antd';
 
+// Set up axios with base URL and default headers
 const axiosInstance = axios.create({
-    baseURL: process.env.REACT_APP_API_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1',
+    baseURL: process.env.REACT_APP_API_URL || process.env.VITE_API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
     },
 });
 
-// Request Interceptor
+// Add token to every request if it exists
 axiosInstance.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token');
@@ -16,7 +18,7 @@ axiosInstance.interceptors.request.use(
             config.headers.Authorization = `Bearer ${token}`;
         }
 
-        // Handle FormData
+        // Use correct content type for file uploads
         if (config.data instanceof FormData) {
             config.headers['Content-Type'] = 'multipart/form-data';
         }
@@ -28,39 +30,46 @@ axiosInstance.interceptors.request.use(
     }
 );
 
-// Response Interceptor
+// Handle API responses and errors
 axiosInstance.interceptors.response.use(
     (response) => {
         const config = response.config as any;
-        // Common success message handling
+        // Show success message if requested
         if (config._showSuccessMessage && response.data && response.data.message) {
             message.success(response.data.message);
         }
         return response;
     },
     (error) => {
+        // Don't show error if the request was cancelled
+        if (axios.isCancel(error)) {
+            return Promise.reject(error);
+        }
+
         const { response, config } = error;
         const customConfig = config as any;
 
         if (response) {
-            // Common error message handling
+            // Show error message from API unless disabled
             if (customConfig._showErrorMessage !== false) {
                 const errorMessage = response.data?.message || 'Something went wrong';
                 message.error(errorMessage);
             }
 
+            // If unauthorized, clear session and go to login
             if (response.status === 401) {
-                // Clear session
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
 
-                // Redirect to login if not already there
                 if (window.location.pathname !== '/login') {
                     window.location.href = '/login';
                 }
             }
         } else {
-            if (customConfig?._showErrorMessage !== false) {
+            // Handle network connection issues
+            const isAborted = error.code === 'ERR_CANCELED' || error.name === 'CanceledError';
+
+            if (customConfig?._showErrorMessage !== false && !isAborted) {
                 message.error('Network error. Please check your connection.');
             }
         }
@@ -70,4 +79,3 @@ axiosInstance.interceptors.response.use(
 );
 
 export default axiosInstance;
-

@@ -7,6 +7,9 @@ import Reports from '../pages/Reports';
 import Login from '../pages/Auth/Login';
 import Signup from '../pages/Auth/Signup';
 import Profile from '../pages/Profile/Profile';
+import ProtectedRoute from '../components/auth/ProtectedRoute';
+import OrderList from '../pages/Orders/OrderList';
+
 
 // Master Data Sub-pages
 import ProductCategories from '../pages/MasterData/Product/ProductCategories';
@@ -19,6 +22,7 @@ import MaterialStock from '../pages/MasterData/Material/MaterialStock';
 import OrderStatuses from '../pages/MasterData/OrderPayment/OrderStatuses';
 import PaymentMethods from '../pages/MasterData/OrderPayment/PaymentMethods';
 import PaymentStatuses from '../pages/MasterData/OrderPayment/PaymentStatuses';
+import HeroSections from '../pages/MasterData/Product/HeroSections';
 
 const AppRouter: React.FC = () => {
     return (
@@ -28,8 +32,12 @@ const AppRouter: React.FC = () => {
                 <Route path="/login" element={<Login />} />
                 <Route path="/signup" element={<Signup />} />
 
-                {/* Protected Routes (wrapped in MainLayout) */}
-                <Route path="/" element={<MainLayout />}>
+                {/* Protected Routes (wrapped in MainLayout and ProtectedRoute) */}
+                <Route path="/" element={
+                    <ProtectedRoute>
+                        <MainLayout />
+                    </ProtectedRoute>
+                }>
                     <Route index element={<Navigate to="/dashboard" replace />} />
                     <Route path="dashboard" element={<Dashboard />} />
 
@@ -46,10 +54,13 @@ const AppRouter: React.FC = () => {
                         <Route path="order-statuses" element={<OrderStatuses />} />
                         <Route path="payment-methods" element={<PaymentMethods />} />
                         <Route path="payment-statuses" element={<PaymentStatuses />} />
+                        <Route path="heroes" element={<HeroSections />} />
                     </Route>
 
                     <Route path="reports" element={<Reports />} />
+                    <Route path="orders" element={<OrderList />} />
                     <Route path="profile" element={<Profile />} />
+
                 </Route>
 
                 {/* Catch all - redirect to dashboard for now */}
